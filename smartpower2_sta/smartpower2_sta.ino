@@ -9,9 +9,14 @@
 #include <SimpleTimer.h>
 #include <mcp4652.h>
 #include <LiquidCrystal_I2C.h>
+#include <ESP8266TimerInterrupt.h>
 
 const String DEFAULT_SSID = "SmartPower2_" + String(ESP.getChipId(), HEX);
 const String DEFAULT_PASSWORD = "12345678";
+
+const uint32_t PRINT_SERIAL_DATA_INTERVAL_MS = 1000;
+const uint32_t PRINT_LCD_DATA_INTERVAL_MS = 1000;
+const uint32_t POWER_READING_INTERVAL_MS = 5;
 
 #define CONSOLE_PORT 23
 
@@ -19,6 +24,8 @@ WiFiServer logServer(CONSOLE_PORT);
 WiFiClient logClient;
 
 #define USE_SERIAL Serial
+ESP8266Timer ITimer;
+void ICACHE_RAM_ATTR TimerHandler(void);
 
 #define MAX_LCD_SSID_LENGTH  12
 #define MAX_LCD_IP_LENGTH    14
@@ -61,13 +68,17 @@ unsigned char D1state;
 char ssid[20];
 char password[20];
 
-float volt;
-float ampere;
-float watt;
-double watth;
+struct ReadingType {
+    uint32_t time;
+    float volt;
+    float ampere;
+    float watt;
+    float watth;
+};
+ReadingType readings;
 
 #define MAX_SRV_CLIENTS 1
-#define WIFI_WAIT_TIMEOUT 10
+#define WIFI_WAIT_TIMEOUT 15
 
 ESP8266WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
@@ -77,7 +88,8 @@ void startWiFi() {
     readNetworkConfig();
     USE_SERIAL.printf("Connecting to \"%s\"...", ssid);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
+    //WiFi.begin(ssid, password);
+    WiFi.begin("LC012-RPi4-Router", "........");
     int counter = 0;
     while (WiFi.status() != WL_CONNECTED && counter != WIFI_WAIT_TIMEOUT) {
         delay(1000);
@@ -101,7 +113,6 @@ void startWiFi() {
     }
 }
 
-SimpleTimer timer;
 // lcd slave address are 0x27 or 0x3f
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
@@ -155,26 +166,27 @@ void setup() {
 
     webserver_init();
 
-    timerId = timer.setInterval(1000, handler);
-
     // Log
     logServer.begin();
     logServer.setNoDelay(true);
+
+    // Interval in microsecs
+    if (ITimer.attachInterruptInterval(POWER_READING_INTERVAL_MS * 1000, TimerHandler)) {
+        Serial.println("Starting  ITimer OK, millis() = " + String(millis()));
+    } else {
+        Serial.println("Can't set ITimer correctly. Select another freq. or interval");
+    }
 }
 
-void loop() {
+void refreshWebServer() {
     server.handleClient();
     webSocket.loop();
-    timer.run();
-
     if (logServer.hasClient()) {
         // A connection attempt is being made
         USE_SERIAL.printf("A connection attempt is being made.\n");
-
         if (!logClient) {
             // This is the first client to connect
             logClient = logServer.available();
-
             USE_SERIAL.printf("This is the first client to connect.\n");
         } else {
             if (!logClient.connected()) {
@@ -182,20 +194,16 @@ void loop() {
                 //  Connect the new client.
                 logClient.stop();
                 logClient = logServer.available();
-
                 USE_SERIAL.printf("A previous client has disconnected.\n");
             } else {
                 // A client connection is already in use.
                 // Drop the new connection attempt.
                 WiFiClient tempClient = logServer.available();
                 tempClient.stop();
-
                 USE_SERIAL.printf("A client connection is already in use.\n");
             }
         }
     }
-
-
 }
 
 void webserver_init(void) {
@@ -297,7 +305,7 @@ void handleClientData(uint8_t num, String data) {
         case CMD_ONOFF:
             onoff = data.substring(1).toInt();
             if (onoff) {
-                volt = watt = ampere = watth = 0;
+                readings.volt = readings.watt = readings.ampere = readings.watth = 0;
             }
             digitalWrite(POWER, onoff);
             digitalWrite(POWERLED, LOW);
@@ -519,22 +527,22 @@ void lcd_status(void) {
 }
 
 void printPower_LCD(void) {
-    double rwatth;
+    float rwatth;
     lcd.setCursor(0, 0);
-    lcd.print(volt, 3);
+    lcd.print(readings.volt, 3);
     lcd.print(" V ");
-    lcd.print(ampere, 3);
+    lcd.print(readings.ampere, 3);
     lcd.print(" A  ");
 
     lcd.setCursor(0, 1);
-    if (watt < 10) {
-        lcd.print(watt, 3);
+    if (readings.watt < 10) {
+        lcd.print(readings.watt, 3);
     } else {
-        lcd.print(watt, 2);
+        lcd.print(readings.watt, 2);
     }
     lcd.print(" W ");
 
-    rwatth = watth / 3600;
+    rwatth = readings.watth / 3600;
     if (rwatth < 10) {
         lcd.print(rwatth, 3);
         lcd.print(" ");
@@ -614,12 +622,12 @@ void printInfo_LCD(void) {
 }
 
 void readPower(void) {
-    volt = ina231_read_voltage();
-    watt = ina231_read_power();
-    ampere = ina231_read_current();
+    readings.volt = ina231_read_voltage();
+    readings.watt = ina231_read_power();
+    readings.ampere = ina231_read_current();
 }
 
-void wifi_connection_status(void) {
+/*void wifi_connection_status(void) {
     if (WiFi.softAPgetStationNum() > 0) {
         if (connectedWeb) {
             D4state = !D4state;
@@ -630,14 +638,14 @@ void wifi_connection_status(void) {
         D4state = HIGH;
     }
     digitalWrite(D4, D4state);
-}
+}*/
 
-double a = 0.0000006562;
-double b = 0.0022084236;
+float a = 0.0000006562;
+float b = 0.0022084236;
 float c = 4.08;
-int quadraticRegression(double volt) {
-    double d;
-    double root;
+int quadraticRegression(float volt) {
+    float d;
+    float root;
     d = b * b - a * (c - volt);
     root = (-b + sqrt(d)) / a;
     if (root < 0) {
@@ -676,7 +684,7 @@ ICACHE_RAM_ATTR void pinChanged() {
             btnPress = 0;
             btnChanged = 1;
             onoff = !onoff;
-            watth = 0;
+            readings.watth = 0;
             digitalWrite(POWER, onoff);
             digitalWrite(POWERLED, LOW);
         }
@@ -722,12 +730,12 @@ void send_data_to_clients(String str, uint8_t page, uint8_t num) {
     }
 }
 
-void handler(void) {
+/*void handler(void) {
     if (onoff == ON) {
         digitalWrite(POWERLED, D1state = !D1state);
-        readPower();
-        String data_serial = String(volt, 3) + "," + String(ampere, 3) + "," +
-                             String(watt, 3) + "," + String(watth / 3600, 3) + "\r\n";
+        //readPower();
+        String data_serial = String(readings.volt, 3) + "," + String(readings.ampere, 3) + "," +
+                             String(readings.watt, 3) + "," + String(readings.watth / 3600, 3) + "\r\n";
 
         Serial.print(data_serial.c_str());
     }
@@ -741,7 +749,7 @@ void handler(void) {
 
     if (btnChanged) {
         if (onoff == OFF) {
-            watt = volt = ampere = watth = 0;
+            readings.watt = readings.volt = readings.ampere = readings.watth = 0;
         }
         if (connectedWeb) {
             send_data_to_clients(String(CMD_ONOFF) + onoff, HOME);
@@ -753,11 +761,11 @@ void handler(void) {
     if (connectedWeb) {
         if (onoff == ON) {
             String data = String(DATA_PVI);
-            data += String(watt, 3) + "," + String(volt, 3) + "," + String(ampere, 3);
+            data += String(readings.watt, 3) + "," + String(readings.volt, 3) + "," + String(readings.ampere, 3);
             if (measureWh) {
-                watth += watt;
+                readings.watth += readings.watt;
             }
-            data += "," + String(watth / 3600, 3);
+            data += "," + String(readings.watth / 3600, 3);
             send_data_to_clients(data, HOME);
         }
     }
@@ -765,8 +773,8 @@ void handler(void) {
     if (logClient && logClient.connected())
     {
         // Report the log info
-        String data = String(volt, 3) + "," + String(ampere, 3) + "," +
-                      String(watt, 3) + "," + String(watth / 3600, 3) + "\r\n";
+        String data = String(readings.volt, 3) + "," + String(readings.ampere, 3) + "," +
+                      String(readings.watt, 3) + "," + String(readings.watth / 3600, 3) + "\r\n";
 
         logClient.write(data.c_str());
 
@@ -777,6 +785,92 @@ void handler(void) {
     }
 
     lcd_status();
-    wifi_connection_status();
+    //wifi_connection_status();
     readSystemReset();
+}*/
+
+void loop() {
+    static uint32_t lastRunWebServerTime = 0;
+    static uint32_t lastUpdateTelnetTime = 0;
+
+    ReadingType local_readings = readings;
+    
+    String datastr = String(local_readings.time) + " " + 
+                     String(local_readings.volt, 3) + "," + String(local_readings.ampere, 3) + "," +
+                     String(local_readings.watt, 3) + "," + String(local_readings.watth / 3600, 3) + "\r\n";
+
+    if (lastUpdateTelnetTime != local_readings.time) {
+        if (logClient && logClient.connected()) {
+            logClient.write(datastr.c_str());
+            while (logClient.available()) {
+                logClient.read();
+            }
+        }
+        lastUpdateTelnetTime = local_readings.time;
+    }
+
+    if (millis() - lastRunWebServerTime >= 1000) {
+        refreshWebServer();
+
+        if (onoff == ON) {
+            digitalWrite(POWERLED, D1state = !D1state);
+            Serial.print(datastr.c_str());
+        }
+
+        if (connectedLCD) {
+            if (onoff == ON)
+                printPower_LCD();
+            else if (onoff == OFF)
+                printInfo_LCD();
+        }
+
+
+        if (connectedWeb) {
+            if (onoff == ON) {
+                String data = String(DATA_PVI);
+                data += String(readings.watt, 3) + "," + String(readings.volt, 3) + "," + String(readings.ampere, 3);
+                if (measureWh) {
+                    readings.watth += readings.watt;
+                }
+                data += "," + String(readings.watth / 3600, 3);
+                send_data_to_clients(data, HOME);
+            }
+        }
+
+        if (btnChanged) {
+            if (onoff == OFF) {
+                readings.watt = readings.volt = readings.ampere = readings.watth = 0;
+            }
+            if (connectedWeb) {
+                send_data_to_clients(String(CMD_ONOFF) + onoff, HOME);
+                measureWh = !onoff;
+            }
+            btnChanged = 0;
+        }
+        lcd_status();
+        //wifi_connection_status();
+        readSystemReset();
+
+        lastRunWebServerTime = millis();
+    }
+}
+
+void ICACHE_RAM_ATTR TimerHandler(void) {
+    readings.time = millis();
+    readPower();
+
+    /*if (logClient && logClient.connected()) {
+        // Report the log info
+        String data = String(readings.time) + " " +
+                      String(readings.volt, 3) + "," + String(readings.ampere, 3) + "," +
+                      String(readings.watt, 3) + "," + String(readings.watth / 3600, 3) + "\r\n";
+
+        logClient.write(data.c_str());
+
+        while (logClient.available()) {
+            logClient.read();
+        }
+    }*/
+    //Serial.printf("%d %.3f,%.3f,%.3f,%.3f\r\n", readings.time, readings.volt, readings.ampere, readings.watt, readings.watth);
+    //readings.time = millis() - curtime;
 }

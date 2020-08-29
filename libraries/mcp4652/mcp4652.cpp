@@ -74,6 +74,7 @@ void ina231_configure(void)
 	unsigned short config;
 
 	config = 0x45ff;
+    config = 0x4127;
 	ina231_write(INA231_REG_CONFIG, config);
 	config = 0x08bd;
 	ina231_write(INA231_REG_CALIBRATION, config);
