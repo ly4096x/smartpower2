@@ -108,7 +108,8 @@ struct client_sp2 client_sp2[5];
 
 void setup() {
     USE_SERIAL.begin(115200);
-    USE_SERIAL.setDebugOutput(true);
+    //USE_SERIAL.setDebugOutput(true);
+    USE_SERIAL.println("smartpower2_sta_slim release 20201110");
     pinMode(POWERLED, OUTPUT);
     
     startWiFi();
