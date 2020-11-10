@@ -4,7 +4,6 @@
 #include <Wire.h>
 #include <SimpleTimer.h>
 #include <mcp4652.h>
-#include <LiquidCrystal_I2C.h>
 #include <ESP8266TimerInterrupt.h>
 
 const String DEFAULT_SSID = "SmartPower2_" + String(ESP.getChipId(), HEX);
@@ -53,7 +52,6 @@ uint8_t onoff = OFF;
 unsigned char measureWh;
 float setVoltage = 5.1f;
 unsigned char connectedWeb;
-unsigned char connectedLCD;
 unsigned char autorun;
 
 unsigned char D4state;
@@ -96,16 +94,6 @@ void startWiFi() {
     }
 }
 
-// lcd slave address are 0x27 or 0x3f
-LiquidCrystal_I2C lcd(0x27, 16, 2);
-
-struct client_sp2 {
-    uint8_t connected;
-    uint8_t page;
-};
-
-struct client_sp2 client_sp2[5];
-
 void setup() {
     USE_SERIAL.begin(115200);
     //USE_SERIAL.setDebugOutput(true);
@@ -136,7 +124,6 @@ void setup() {
     USE_SERIAL.println("");
 
     initSmartPower();
-    lcd_status();
 
     // Log
     logServer.begin();
@@ -179,7 +166,6 @@ void refreshWebServer() {
 void initSmartPower(void) {
     onoff = !autorun;
 
-
     mcp4652_write(WRITE_WIPER0, quadraticRegression(setVoltage));
     pinMode(POWER, OUTPUT);
     digitalWrite(POWER, onoff);
@@ -188,133 +174,10 @@ void initSmartPower(void) {
     digitalWrite(D4, HIGH);
 }
 
-// lcd slave address are 0x27 or 0x3f
-unsigned char lcdSlaveAddr;
-int lcd_available(void) {
-    Wire.beginTransmission(0x27);
-    if (!Wire.endTransmission()) {
-        lcdSlaveAddr = 0x27;
-        return lcdSlaveAddr;
-    } else {
-        Wire.beginTransmission(0x3f);
-        if (!Wire.endTransmission()) {
-            lcdSlaveAddr = 0x3f;
-            return lcdSlaveAddr;
-        }
-    }
-
-    lcdSlaveAddr = 0;
-
-    return 0;
-}
-
-void lcd_status(void) {
-    if (lcd_available() > 0) {
-        if (!connectedLCD) {
-            lcd = LiquidCrystal_I2C(lcdSlaveAddr, 16, 2);
-            lcd.init();
-            lcd.backlight();
-            connectedLCD = 1;
-        }
-    } else {
-        connectedLCD = 0;
-    }
-}
-
-void printPower_LCD(void) {
-    float rwatth;
-    lcd.setCursor(0, 0);
-    lcd.print(readings.volt, 3);
-    lcd.print(" V ");
-    lcd.print(readings.ampere, 3);
-    lcd.print(" A  ");
-
-    lcd.setCursor(0, 1);
-    if (readings.watt < 10) {
-        lcd.print(readings.watt, 3);
-    } else {
-        lcd.print(readings.watt, 2);
-    }
-    lcd.print(" W ");
-
-    rwatth = readings.watth / 3600;
-    if (rwatth < 10) {
-        lcd.print(rwatth, 3);
-        lcd.print(" ");
-    } else if (rwatth < 100) {
-        lcd.print(rwatth, 2);
-        lcd.print(" ");
-    } else if (rwatth < 1000) {
-        lcd.print(rwatth, 1);
-        lcd.print(" ");
-    } else {
-        lcd.print(rwatth / 1000, 0);
-        lcd.print(" K");
-    }
-    lcd.print("Wh     ");
-}
-
 uint8_t cnt_ssid;
 int8_t cnt_ip;
 int8_t cursor_ssid;
 int8_t cursor_ip;
-void printInfo_LCD(void) {
-    String str;
-    int i;
-    cnt_ssid = String(ssid).length();
-    lcd.setCursor(0, 0);
-    lcd.print("SSID:");
-    str = String(ssid);
-    if (cnt_ssid < MAX_LCD_SSID_LENGTH) {
-        lcd.print(str);
-        for (i = 0; i < MAX_LCD_SSID_LENGTH; i++) {
-            lcd.print(" ");
-        }
-    } else {
-        if ((cursor_ssid - 5) == cnt_ssid) {
-            cursor_ssid = 0;
-        }
-        lcd.print(str.substring(cursor_ssid++));
-        if ((cnt_ssid - cursor_ssid) < MAX_LCD_SSID_LENGTH - 5) {
-            if (cnt_ssid < cursor_ssid) {
-                for (i = 0; i < 6 - (cursor_ssid - cnt_ssid); i++)
-                    lcd.print(" ");
-            } else {
-                lcd.print("     ");
-            }
-            lcd.print(str);
-        } else if ((cnt_ssid - cursor_ssid) < MAX_LCD_SSID_LENGTH) {
-            for (i = 0; i < MAX_LCD_SSID_LENGTH - (cnt_ssid - cursor_ssid); i++)
-                lcd.print(" ");
-        }
-    }
-
-    lcd.setCursor(0, 1);
-    lcd.print("IP:");
-    cnt_ip = ip.toString().length();
-    if (cnt_ip < MAX_LCD_IP_LENGTH) {
-        lcd.print(ip.toString());
-        for (i = 0; i < MAX_LCD_IP_LENGTH - cnt_ip; i++)
-            lcd.print(" ");
-    } else {
-        if ((cursor_ip - 5) == cnt_ip) {
-            cursor_ip = 0;
-        }
-        lcd.print(ip.toString().substring(cursor_ip++));
-        if ((cnt_ip - cursor_ip) < MAX_LCD_IP_LENGTH - 5) {
-            if (cnt_ip < cursor_ip) {
-                for (i = 0; i < 6 - (cursor_ip - cnt_ip); i++)
-                    lcd.print(" ");
-            } else {
-                lcd.print("     ");
-            }
-            lcd.print(ip.toString());
-        } else if ((cnt_ip - cursor_ip) < MAX_LCD_IP_LENGTH) {
-            for (i = 0; i < MAX_LCD_IP_LENGTH - (cnt_ip - cursor_ip); i++)
-                lcd.print(" ");
-        }
-    }
-}
 
 void readPower(void) {
     readings.volt = ina231_read_voltage();
@@ -412,20 +275,12 @@ void loop() {
             Serial.print(datastr.c_str());
         }
 
-        if (connectedLCD) {
-            if (onoff == ON)
-                printPower_LCD();
-            else if (onoff == OFF)
-                printInfo_LCD();
-        }
-
         if (btnChanged) {
             if (onoff == OFF) {
                 readings.watt = readings.volt = readings.ampere = readings.watth = 0;
             }
             btnChanged = 0;
         }
-        lcd_status();
         //wifi_connection_status();
         readSystemReset();
 
