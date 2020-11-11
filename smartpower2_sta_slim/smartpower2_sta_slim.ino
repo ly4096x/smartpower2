@@ -86,7 +86,7 @@ void startWiFi() {
         ESP.restart();
     } else {
         ip = WiFi.localIP();
-        USE_SERIAL.print("Connected!\nIP: ");
+        USE_SERIAL.print("Connected!\r\nIP: ");
         USE_SERIAL.println(ip);
     }
 }
@@ -94,7 +94,6 @@ void startWiFi() {
 void setup() {
     USE_SERIAL.begin(2000000);
     USE_SERIAL.setDebugOutput(true);
-    USE_SERIAL.println("smartpower2_sta_slim release 20201110");
     pinMode(POWERLED, OUTPUT);
     
     startWiFi();
@@ -116,6 +115,7 @@ void setup() {
     USE_SERIAL.println("##############################");
     USE_SERIAL.printf("SmartPower2 v");
     USE_SERIAL.print(FWversion);
+    USE_SERIAL.println("smartpower2_sta_slim release " __DATE__ __TIME__);
     USE_SERIAL.println(" (Serial Interface)");
     USE_SERIAL.println("##############################");
     USE_SERIAL.println("");
@@ -270,6 +270,9 @@ void loop() {
                     break;
                 }
             }
+            if (flushCount) {
+                Serial.print("[flush recovered]\r\n");
+            }
             while (logClient.available()) {
                 logClient.read();
             }
@@ -301,5 +304,5 @@ void loop() {
 void ICACHE_RAM_ATTR TimerHandler(void) {
     readings.time = millis();
     readPower();
-    ESP.wdtFeed();
+    //ESP.wdtFeed();
 }
