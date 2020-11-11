@@ -93,7 +93,6 @@ void startWiFi() {
 
 void setup() {
     USE_SERIAL.begin(2000000);
-    USE_SERIAL.setDebugOutput(true);
     pinMode(POWERLED, OUTPUT);
     
     startWiFi();
@@ -115,7 +114,7 @@ void setup() {
     USE_SERIAL.println("##############################");
     USE_SERIAL.printf("SmartPower2 v");
     USE_SERIAL.print(FWversion);
-    USE_SERIAL.println("smartpower2_sta_slim release " __DATE__ __TIME__);
+    USE_SERIAL.println("smartpower2_sta_slim release " __DATE__ " " __TIME__);
     USE_SERIAL.println(" (Serial Interface)");
     USE_SERIAL.println("##############################");
     USE_SERIAL.println("");
@@ -264,14 +263,14 @@ void loop() {
             int flushCount = 0;
             while (!logClient.flush(500)) {
                 ESP.wdtFeed();
-                USE_SERIAL.printf("[flush failed cnt=%d]\r\n", flushCount);
+                USE_SERIAL.printf("[%d flush failed cnt=%d]\r\n", millis(), flushCount);
                 if (flushCount++ == 4) {
                     logClient.stop();
                     break;
                 }
             }
-            if (flushCount) {
-                Serial.print("[flush recovered]\r\n");
+            if (flushCount && flushCount < 4) {
+                Serial.printf("[%d flush recovered]\r\n", millis());
             }
             while (logClient.available()) {
                 logClient.read();
