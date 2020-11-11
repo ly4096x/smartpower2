@@ -82,7 +82,7 @@ void startWiFi() {
         ESP.restart();
     } else {
         ip = WiFi.localIP();
-        USE_SERIAL.print("Connected!\r\nIP: ");
+        USE_SERIAL.print("Connected!\nIP: ");
         USE_SERIAL.println(ip);
     }
 }
@@ -100,7 +100,7 @@ void setup() {
     pinMode(BTN_ONOFF, INPUT);
 
     for (uint8_t t = 4; t > 0; t--) {
-        USE_SERIAL.printf("[SETUP] BOOT WAIT %d...\n\r", t);
+        USE_SERIAL.printf("[SETUP] BOOT WAIT %d...\n", t);
         USE_SERIAL.flush();
         delay(1000);
     }
@@ -118,7 +118,7 @@ void setup() {
 
     // Log
     logServer.begin();
-    logServer.setNoDelay(true);
+    logServer.setNoDelay(false);
 }
 
 void refreshWebServer() {
@@ -158,11 +158,6 @@ void initSmartPower(void) {
     pinMode(D4, OUTPUT);
     digitalWrite(D4, HIGH);
 }
-
-uint8_t cnt_ssid;
-int8_t cnt_ip;
-int8_t cursor_ssid;
-int8_t cursor_ip;
 
 void readPower(void) {
     readings.time = millis();
@@ -238,46 +233,35 @@ void loop() {
     
     static char datastr[100];
 
-    if (millis() + POWER_READING_INTERVAL_MS - lastUpdateTelnetTime >= POWER_READING_INTERVAL_MS) {
+    if (millis() - lastUpdateTelnetTime >= POWER_READING_INTERVAL_MS) {
         readPower();
-        snprintf(datastr, 100, "%d %.4f %.4f\r\n",
+        snprintf(datastr, 100, "%d %.4f %.4f\n",
                 readings.time,
                 readings.volt,
                 readings.ampere
         );
-        lastUpdateTelnetTime += POWER_READING_INTERVAL_MS;
         ESP.wdtFeed();
         
         if (logClient && logClient->connected()) {
             ESP.wdtFeed();
             logClient->write(datastr);
-            int flushCount = 0;
-            while (!logClient->flush(100)) {
-                ESP.wdtFeed();
-                USE_SERIAL.printf("[%d flush failed cnt=%d]\r\n", millis(), flushCount);
-                if (flushCount++ == 10) {
-                    logClient->stop();
-                    delete logClient;
-                    logClient = nullptr;
-                    break;
-                }
-            }
-            if (flushCount && flushCount < 4) {
-                Serial.printf("[%d flush recovered]\r\n", millis());
-            }
             while (logClient->available()) {
                 logClient->read();
             }
         }
+        uint32_t t = millis();
+        if (t - readings.time >= POWER_READING_INTERVAL_MS)
+            Serial.printf("%d [sample time = %d][delta = %d]\n", t, t - readings.time, readings.time - lastUpdateTelnetTime);
+        lastUpdateTelnetTime = readings.time;
     }
 
     if (millis() - lastRunWebServerTime >= 1000) {
+        lastRunWebServerTime = millis();
         ESP.wdtFeed();
         refreshWebServer();
 
         if (onoff == ON) {
             digitalWrite(POWERLED, D1state = !D1state);
-            Serial.print(datastr);
         }
 
         if (btnChanged) {
@@ -286,9 +270,7 @@ void loop() {
             }
             btnChanged = 0;
         }
-        //wifi_connection_status();
         readSystemReset();
-
-        lastRunWebServerTime = millis();
+        //Serial.printf("[web server time = %d]\n", millis() - lastRunWebServerTime);
     }
 }
