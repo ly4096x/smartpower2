@@ -48,11 +48,11 @@ void ICACHE_RAM_ATTR TimerHandler(void);
 
 #define FWversion 1.6
 
-uint8_t onoff = OFF;
+uint8_t onoff;
 unsigned char measureWh;
 float setVoltage = 5.1f;
 unsigned char connectedWeb;
-unsigned char autorun;
+unsigned char autorun = 1;
 
 unsigned char D4state;
 unsigned char D1state;
@@ -249,16 +249,23 @@ void loop() {
 
     ReadingType local_readings = readings;
     
-    String datastr = String(local_readings.time) + " " + 
-                     String(local_readings.volt, 3) + "," + String(local_readings.ampere, 3) + "\r\n";
+    //String datastr = String(local_readings.time) + " " + 
+    //                 String(local_readings.volt, 3) + "," + String(local_readings.ampere, 3) + "\r\n";
+    static char datastr[100];
+    snprintf(datastr, 100, "%d %.4f %.4f\r\n",
+            local_readings.time,
+            local_readings.volt,
+            local_readings.ampere
+    );
 
     if (lastUpdateTelnetTime != local_readings.time) {
         if (logClient && logClient.connected()) {
             ESP.wdtFeed();
-            logClient.write(datastr.c_str());
+            logClient.write(datastr);
             int flushCount = 0;
             while (!logClient.flush(500)) {
                 ESP.wdtFeed();
+                USE_SERIAL.printf("[flush failed cnt=%d]\n", flushCount);
                 if (flushCount++ == 4) {
                     logClient.stop();
                     break;
@@ -276,7 +283,7 @@ void loop() {
 
         if (onoff == ON) {
             digitalWrite(POWERLED, D1state = !D1state);
-            Serial.print(datastr.c_str());
+            Serial.print(datastr);
         }
 
         if (btnChanged) {
@@ -294,6 +301,8 @@ void loop() {
 
 void ICACHE_RAM_ATTR TimerHandler(void) {
     readings.time = millis();
+    USE_SERIAL.printf("ISR s=%d", readings.time);
     readPower();
     ESP.wdtFeed();
+    USE_SERIAL.printf(" d=%d\n", millis() - readings.time);
 }
