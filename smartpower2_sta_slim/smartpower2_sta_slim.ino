@@ -10,7 +10,6 @@ const String DEFAULT_SSID = "SmartPower2_" + String(ESP.getChipId(), HEX);
 const String DEFAULT_PASSWORD = "12345678";
 
 const uint32_t PRINT_SERIAL_DATA_INTERVAL_MS = 1000;
-const uint32_t PRINT_LCD_DATA_INTERVAL_MS = 1000;
 const uint32_t POWER_READING_INTERVAL_MS = 5;
 
 #define CONSOLE_PORT 23
@@ -265,7 +264,7 @@ void loop() {
             int flushCount = 0;
             while (!logClient.flush(500)) {
                 ESP.wdtFeed();
-                USE_SERIAL.printf("[flush failed cnt=%d]\n", flushCount);
+                USE_SERIAL.printf("[flush failed cnt=%d]\r\n", flushCount);
                 if (flushCount++ == 4) {
                     logClient.stop();
                     break;
@@ -301,8 +300,6 @@ void loop() {
 
 void ICACHE_RAM_ATTR TimerHandler(void) {
     readings.time = millis();
-    USE_SERIAL.printf("ISR s=%d", readings.time);
     readPower();
     ESP.wdtFeed();
-    USE_SERIAL.printf(" d=%d\n", millis() - readings.time);
 }
