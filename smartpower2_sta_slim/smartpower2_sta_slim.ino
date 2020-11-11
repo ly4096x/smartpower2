@@ -64,8 +64,6 @@ struct ReadingType {
     uint32_t time;
     float volt;
     float ampere;
-    float watt;
-    float watth;
 };
 ReadingType readings;
 
@@ -95,8 +93,8 @@ void startWiFi() {
 }
 
 void setup() {
-    USE_SERIAL.begin(115200);
-    //USE_SERIAL.setDebugOutput(true);
+    USE_SERIAL.begin(2000000);
+    USE_SERIAL.setDebugOutput(true);
     USE_SERIAL.println("smartpower2_sta_slim release 20201110");
     pinMode(POWERLED, OUTPUT);
     
@@ -181,7 +179,6 @@ int8_t cursor_ip;
 
 void readPower(void) {
     readings.volt = ina231_read_voltage();
-    readings.watt = ina231_read_power();
     readings.ampere = ina231_read_current();
 }
 
@@ -229,7 +226,6 @@ ICACHE_RAM_ATTR void pinChanged() {
             btnPress = 0;
             btnChanged = 1;
             onoff = !onoff;
-            readings.watth = 0;
             digitalWrite(POWER, onoff);
             digitalWrite(POWERLED, LOW);
         }
@@ -254,12 +250,20 @@ void loop() {
     ReadingType local_readings = readings;
     
     String datastr = String(local_readings.time) + " " + 
-                     String(local_readings.volt, 3) + "," + String(local_readings.ampere, 3) + "," +
-                     String(local_readings.watt, 3) + "," + String(local_readings.watth / 3600, 3) + "\r\n";
+                     String(local_readings.volt, 3) + "," + String(local_readings.ampere, 3) + "\r\n";
 
     if (lastUpdateTelnetTime != local_readings.time) {
         if (logClient && logClient.connected()) {
+            ESP.wdtFeed();
             logClient.write(datastr.c_str());
+            int flushCount = 0;
+            while (!logClient.flush(500)) {
+                ESP.wdtFeed();
+                if (flushCount++ == 4) {
+                    logClient.stop();
+                    break;
+                }
+            }
             while (logClient.available()) {
                 logClient.read();
             }
@@ -277,7 +281,7 @@ void loop() {
 
         if (btnChanged) {
             if (onoff == OFF) {
-                readings.watt = readings.volt = readings.ampere = readings.watth = 0;
+                readings.volt = readings.ampere = 0;
             }
             btnChanged = 0;
         }
@@ -291,4 +295,5 @@ void loop() {
 void ICACHE_RAM_ATTR TimerHandler(void) {
     readings.time = millis();
     readPower();
+    ESP.wdtFeed();
 }
