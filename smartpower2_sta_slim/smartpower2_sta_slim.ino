@@ -2,9 +2,8 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <Wire.h>
-#include <SimpleTimer.h>
 #include <mcp4652.h>
-#include <ESP8266TimerInterrupt.h>
+#include "git_version.h"
 
 const String DEFAULT_SSID = "SmartPower2_" + String(ESP.getChipId(), HEX);
 const String DEFAULT_PASSWORD = "12345678";
@@ -15,11 +14,9 @@ const uint32_t POWER_READING_INTERVAL_MS = 5;
 #define CONSOLE_PORT 23
 
 WiFiServer logServer(CONSOLE_PORT);
-WiFiClient logClient;
+WiFiClient *logClient = nullptr;
 
 #define USE_SERIAL Serial
-ESP8266Timer ITimer;
-void ICACHE_RAM_ATTR TimerHandler(void);
 
 #define MAX_LCD_SSID_LENGTH  12
 #define MAX_LCD_IP_LENGTH    14
@@ -48,7 +45,6 @@ void ICACHE_RAM_ATTR TimerHandler(void);
 #define FWversion 1.6
 
 uint8_t onoff;
-unsigned char measureWh;
 float setVoltage = 5.1f;
 unsigned char connectedWeb;
 unsigned char autorun = 1;
@@ -92,7 +88,7 @@ void startWiFi() {
 }
 
 void setup() {
-    USE_SERIAL.begin(2000000);
+    USE_SERIAL.begin(115200);
     pinMode(POWERLED, OUTPUT);
     
     startWiFi();
@@ -102,7 +98,6 @@ void setup() {
     ina231_configure();
 
     pinMode(BTN_ONOFF, INPUT);
-    attachInterrupt(digitalPinToInterrupt(BTN_ONOFF), pinChanged, CHANGE);
 
     for (uint8_t t = 4; t > 0; t--) {
         USE_SERIAL.printf("[SETUP] BOOT WAIT %d...\n\r", t);
@@ -114,7 +109,7 @@ void setup() {
     USE_SERIAL.println("##############################");
     USE_SERIAL.printf("SmartPower2 v");
     USE_SERIAL.print(FWversion);
-    USE_SERIAL.println("smartpower2_sta_slim release " __DATE__ " " __TIME__);
+    USE_SERIAL.println("smartpower2_sta_slim release " __DATE__ " " __TIME__ " " __GIT_SHA__);
     USE_SERIAL.println(" (Serial Interface)");
     USE_SERIAL.println("##############################");
     USE_SERIAL.println("");
@@ -124,36 +119,30 @@ void setup() {
     // Log
     logServer.begin();
     logServer.setNoDelay(true);
-
-    // Interval in microsecs
-    if (ITimer.attachInterruptInterval(POWER_READING_INTERVAL_MS * 1000, TimerHandler)) {
-        Serial.println("Starting  ITimer OK, millis() = " + String(millis()));
-    } else {
-        Serial.println("Can't set ITimer correctly. Select another freq. or interval");
-    }
 }
 
 void refreshWebServer() {
     if (logServer.hasClient()) {
         // A connection attempt is being made
-        USE_SERIAL.printf("A connection attempt is being made.\n");
+        USE_SERIAL.println("A connection attempt is being made.");
         if (!logClient) {
             // This is the first client to connect
-            logClient = logServer.available();
-            USE_SERIAL.printf("This is the first client to connect.\n");
+            logClient = new WiFiClient(logServer.available());
+            USE_SERIAL.println("First client connected.");
         } else {
-            if (!logClient.connected()) {
+            if (!logClient->connected()) {
                 // A previous client has disconnected.
                 //  Connect the new client.
-                logClient.stop();
-                logClient = logServer.available();
-                USE_SERIAL.printf("A previous client has disconnected.\n");
+                logClient->stop();
+                delete logClient;
+                logClient = new WiFiClient(logServer.available());
+                USE_SERIAL.println("A previous client has disconnected.");
             } else {
                 // A client connection is already in use.
                 // Drop the new connection attempt.
                 WiFiClient tempClient = logServer.available();
                 tempClient.stop();
-                USE_SERIAL.printf("A client connection is already in use.\n");
+                USE_SERIAL.println("A client connection is already in use.");
             }
         }
     }
@@ -176,6 +165,7 @@ int8_t cursor_ssid;
 int8_t cursor_ip;
 
 void readPower(void) {
+    readings.time = millis();
     readings.volt = ina231_read_voltage();
     readings.ampere = ina231_read_current();
 }
@@ -235,6 +225,7 @@ void readSystemReset() {
         if (resetCnt++ > 5) {
             USE_SERIAL.println("System Reset!!");
             resetCnt = 0;
+            ESP.restart();
         }
     } else {
         resetCnt = 0;
@@ -244,42 +235,44 @@ void readSystemReset() {
 void loop() {
     static uint32_t lastRunWebServerTime = 0;
     static uint32_t lastUpdateTelnetTime = 0;
-
-    ReadingType local_readings = readings;
     
-    //String datastr = String(local_readings.time) + " " + 
-    //                 String(local_readings.volt, 3) + "," + String(local_readings.ampere, 3) + "\r\n";
     static char datastr[100];
-    snprintf(datastr, 100, "%d %.4f %.4f\r\n",
-            local_readings.time,
-            local_readings.volt,
-            local_readings.ampere
-    );
 
-    if (lastUpdateTelnetTime != local_readings.time) {
-        if (logClient && logClient.connected()) {
+    if (millis() + POWER_READING_INTERVAL_MS - lastUpdateTelnetTime >= POWER_READING_INTERVAL_MS) {
+        readPower();
+        snprintf(datastr, 100, "%d %.4f %.4f\r\n",
+                readings.time,
+                readings.volt,
+                readings.ampere
+        );
+        lastUpdateTelnetTime += POWER_READING_INTERVAL_MS;
+        ESP.wdtFeed();
+        
+        if (logClient && logClient->connected()) {
             ESP.wdtFeed();
-            logClient.write(datastr);
+            logClient->write(datastr);
             int flushCount = 0;
-            while (!logClient.flush(500)) {
+            while (!logClient->flush(100)) {
                 ESP.wdtFeed();
                 USE_SERIAL.printf("[%d flush failed cnt=%d]\r\n", millis(), flushCount);
-                if (flushCount++ == 4) {
-                    logClient.stop();
+                if (flushCount++ == 10) {
+                    logClient->stop();
+                    delete logClient;
+                    logClient = nullptr;
                     break;
                 }
             }
             if (flushCount && flushCount < 4) {
                 Serial.printf("[%d flush recovered]\r\n", millis());
             }
-            while (logClient.available()) {
-                logClient.read();
+            while (logClient->available()) {
+                logClient->read();
             }
         }
-        lastUpdateTelnetTime = local_readings.time;
     }
 
     if (millis() - lastRunWebServerTime >= 1000) {
+        ESP.wdtFeed();
         refreshWebServer();
 
         if (onoff == ON) {
@@ -298,10 +291,4 @@ void loop() {
 
         lastRunWebServerTime = millis();
     }
-}
-
-void ICACHE_RAM_ATTR TimerHandler(void) {
-    readings.time = millis();
-    readPower();
-    //ESP.wdtFeed();
 }
