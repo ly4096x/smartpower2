@@ -5,6 +5,12 @@
 #include <mcp4652.h>
 #include "git_version.h"
 
+#define FWversion 1.6
+#define REPO_URL "https://github.com/ly4096x/smartpower2"
+
+#define __QUOTE(name) #name
+#define STR(x) __QUOTE(x)
+
 const String DEFAULT_SSID = "SmartPower2_" + String(ESP.getChipId(), HEX);
 const String DEFAULT_PASSWORD = "12345678";
 
@@ -41,8 +47,6 @@ WiFiClient *logClient = nullptr;
 #define DATA_PVI            'd'
 #define MEASUREWATTHOUR     'm'
 #define FW_VERSION          'f'
-
-#define FWversion 1.6
 
 uint8_t onoff;
 float setVoltage = 5.1f;
@@ -107,9 +111,9 @@ void setup() {
 
     USE_SERIAL.println("");
     USE_SERIAL.println("##############################");
-    USE_SERIAL.printf("SmartPower2 v");
-    USE_SERIAL.print(FWversion);
+    USE_SERIAL.println("SmartPower2 v" STR(FWversion));
     USE_SERIAL.println("smartpower2_sta_slim release " __DATE__ " " __TIME__ " " __GIT_SHA__);
+    USE_SERIAL.println(REPO_URL);
     USE_SERIAL.println(" (Serial Interface)");
     USE_SERIAL.println("##############################");
     USE_SERIAL.println("");
